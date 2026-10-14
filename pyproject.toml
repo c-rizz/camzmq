@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"] # 64: editable installs (PEP 660)
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "camzmq"
+version = "0.1.0"
+description = "Camera frames (rgb + metric depth) over ZMQ, from ROS 2 or the ZED SDK, received as plain numpy arrays"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["pyzmq", "numpy"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+camzmq-zed = "camzmq.cli:zed_main"
+camzmq-ros2 = "camzmq.cli:ros2_main"
+camzmq-synthetic = "camzmq.cli:synthetic_main"
+camzmq-client = "camzmq.cli:client_main"
+
+[tool.setuptools]
+packages = ["camzmq", "camzmq.sources"]
