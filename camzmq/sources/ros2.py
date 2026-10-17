@@ -5,6 +5,7 @@ import time
 
 import numpy as np
 
+from ..clock import source_to_system_time
 from ..intrinsics import Intrinsics
 from ..publisher import FrameSource, SourceCamera, SourceFrame
 
@@ -47,17 +48,32 @@ class Ros2Source(FrameSource):
     """One camera from ROS 2 topics, e.g. the ZED ROS 2 wrapper's rectified color image and registered depth.
 
     With both an rgb and a depth topic, images are paired by identical header stamp (the ZED wrapper stamps both with
-    the capture time); an image left without a partner is dropped. The capture time is the header stamp, so the
-    topics must be stamped with the system clock (no use_sim_time): clock() is time.time. The intrinsics come from
-    the camera_info topic, which must describe the published resolution.
+    the capture time); an image left without a partner is dropped. The intrinsics come from the camera_info topic,
+    which must describe the published resolution.
+
+    Header stamps are in ROS time: the system clock, or the simulation clock (/clock) with use_sim_time. Each frame
+    carries its header stamp as t_source, and its capture time in the system clock as t_capture, obtained when the
+    image arrives by carrying its age in ROS time over to the system clock. That age is the delivery delay, so the
+    conversion stays accurate even with a simulation running slower than real time, or restarting its clock.
     """
 
     def __init__(self, name : str, camera_info_topic : str, rgb_topic : str | None = None,
-                 depth_topic : str | None = None, node_name : str = "camzmq_publisher", info_timeout_s : float = 10.0):
+                 depth_topic : str | None = None, node_name : str = "camzmq_publisher", info_timeout_s : float = 10.0,
+                 use_sim_time : bool = False, max_stamp_delay_s : float = 10.0):
+        """
+        Parameters
+        ----------
+        use_sim_time : bool
+            Follow the simulation clock (/clock) as ROS time, for topics stamped with simulation time.
+        max_stamp_delay_s : float
+            An image whose header stamp is further than this from the current ROS time (in the past, or in the
+            future) raises: its stamp is not in the clock the node follows, i.e. use_sim_time is set wrong.
+        """
         if rgb_topic is None and depth_topic is None:
             raise ValueError("Ros2Source needs an rgb topic, a depth topic, or both")
         try:
             import rclpy
+            from rclpy.parameter import Parameter
             from rclpy.qos import qos_profile_sensor_data
             from sensor_msgs.msg import CameraInfo, Image
         except ImportError as e:
@@ -65,7 +81,10 @@ class Ros2Source(FrameSource):
         self._rclpy = rclpy
         if not rclpy.ok():
             rclpy.init()
-        self._node = rclpy.create_node(node_name)
+        self._node = rclpy.create_node(node_name, parameter_overrides=[
+            Parameter("use_sim_time", Parameter.Type.BOOL, use_sim_time)])
+        self._use_sim_time = use_sim_time
+        self._max_stamp_delay_s = max_stamp_delay_s
         self._name = name
         self._paired = rgb_topic is not None and depth_topic is not None
         self._info = None
@@ -80,8 +99,9 @@ class Ros2Source(FrameSource):
         self._camera = SourceCamera(height=self._info.height, width=self._info.width,
                                     intrinsics=Intrinsics(fx=k[0], fy=k[4], cx=k[2], cy=k[5]),
                                     has_rgb=rgb_topic is not None, has_depth=depth_topic is not None)
-        self._pending_rgb : dict[float, np.ndarray] = {}
-        self._pending_depth : dict[float, np.ndarray] = {}
+        # stamp -> (image, capture time in the system clock)
+        self._pending_rgb : dict[float, tuple[np.ndarray, float]] = {}
+        self._pending_depth : dict[float, tuple[np.ndarray, float]] = {}
         self._ready : list[SourceFrame] = []
         if rgb_topic is not None:
             self._node.create_subscription(Image, rgb_topic, self._on_rgb, qos_profile_sensor_data)
@@ -91,23 +111,45 @@ class Ros2Source(FrameSource):
     def _on_info(self, msg) -> None:
         self._info = msg
 
+    def _capture_times(self, msg) -> tuple[float, float] | None:
+        """(header stamp, capture time in the system clock), or None if ROS time is not available yet."""
+        ros_now = self._node.get_clock().now().nanoseconds*1e-9
+        system_now = time.time()
+        if ros_now == 0.0: # with use_sim_time, no /clock message received yet
+            return None
+        stamp = _stamp_seconds(msg.header.stamp)
+        if abs(ros_now - stamp) > self._max_stamp_delay_s:
+            hint = ("are the topics in system time? Run without --use-sim-time" if self._use_sim_time
+                    else "if the topics are stamped with simulation time, pass --use-sim-time")
+            raise RuntimeError(f"image stamped {stamp:.3f}s, but the ROS time is {ros_now:.3f}s "
+                               f"({'use_sim_time' if self._use_sim_time else 'system clock'}): {hint}")
+        return stamp, source_to_system_time(stamp, ros_now, system_now)
+
     def _on_rgb(self, msg) -> None:
-        self._add(_stamp_seconds(msg.header.stamp), rgb=rgb_from_image_msg(msg))
+        times = self._capture_times(msg)
+        if times is not None:
+            self._add(*times, rgb=rgb_from_image_msg(msg))
 
     def _on_depth(self, msg) -> None:
-        self._add(_stamp_seconds(msg.header.stamp), depth=depth_from_image_msg(msg))
+        times = self._capture_times(msg)
+        if times is not None:
+            self._add(*times, depth=depth_from_image_msg(msg))
 
-    def _add(self, stamp : float, rgb : np.ndarray | None = None, depth : np.ndarray | None = None) -> None:
+    def _add(self, stamp : float, t_capture : float, rgb : np.ndarray | None = None,
+             depth : np.ndarray | None = None) -> None:
         if not self._paired:
-            self._ready.append(SourceFrame(camera=self._name, t_capture=stamp, rgb=rgb, depth=depth))
+            self._ready.append(SourceFrame(camera=self._name, t_capture=t_capture, rgb=rgb, depth=depth, t_source=stamp))
             return
         if rgb is not None:
-            self._pending_rgb[stamp] = rgb
+            self._pending_rgb[stamp] = (rgb, t_capture)
         if depth is not None:
-            self._pending_depth[stamp] = depth
+            self._pending_depth[stamp] = (depth, t_capture)
         if stamp in self._pending_rgb and stamp in self._pending_depth:
-            self._ready.append(SourceFrame(camera=self._name, t_capture=stamp,
-                                           rgb=self._pending_rgb.pop(stamp), depth=self._pending_depth.pop(stamp)))
+            rgb, t_rgb = self._pending_rgb.pop(stamp)
+            depth, t_depth = self._pending_depth.pop(stamp)
+            # Both estimate the same instant; the earlier one carries the shorter delivery delay over
+            self._ready.append(SourceFrame(camera=self._name, t_capture=min(t_rgb, t_depth), rgb=rgb, depth=depth,
+                                           t_source=stamp))
             # anything older than a completed pair will not be completed anymore
             for pending in (self._pending_rgb, self._pending_depth):
                 for old in [s for s in pending if s < stamp]:

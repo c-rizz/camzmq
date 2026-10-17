@@ -28,10 +28,12 @@ Or from the ZED ROS 2 wrapper's topics:
 
 ```
 camzmq-ros2 --name zed --port 5700 --size 64x102 \
-    --info-topic /zed/zed_node/rgb/camera_info \
-    --rgb-topic /zed/zed_node/rgb/image_rect_color \
-    --depth-topic /zed/zed_node/depth/depth_registered
+    --info-topic /zed_front_down/camera_info \
+    --rgb-topic /zed_front_down/image \
+    --depth-topic /zed_front_down/depth_image
 ```
+
+Add `--use-sim-time` when the topics come from a simulator stamping them with simulation time (`/clock`).
 
 The metadata is served on `--port`, the cameras on the following ports.
 
@@ -75,7 +77,11 @@ own socket and each frame (header, rgb and depth together) is a single flat buff
 `np.frombuffer`. rgb and depth of the same instant always travel together. No pickle: the format is a fixed header
 plus raw arrays (see `camzmq/wire.py`).
 
-**Time.** Each message carries the capture time and the send time, both in the publisher's clock. The subscriber
-stamps each message on arrival and keeps the minimum of (arrival - send) over a window, which converts publisher
-times to the local clock (as pyxbot's `ClockDeltaEstimator` does): ages come out underestimated by at most the
-minimum one-way latency. A stale image looks perfectly valid, so check the age.
+**Time.** Each message carries the capture time and the send time, both in the publisher's system clock, and the
+capture time as the source stamped it (`t_source`: for ROS 2, the header stamp, which is simulation time with
+`--use-sim-time`). The ROS 2 publisher converts header stamps to the system clock as each image arrives, carrying the
+image's age in ROS time over to the system clock; that age is just the delivery delay, so the conversion stays
+accurate with a simulation slower than real time or restarting its clock. The subscriber stamps each message on
+arrival and keeps the minimum of (arrival - send) over a window, which converts publisher times to the local clock
+(as pyxbot's `ClockDeltaEstimator` does): ages come out underestimated by at most the minimum one-way latency. A stale
+image looks perfectly valid, so check the age.

@@ -4,6 +4,17 @@ from __future__ import annotations
 import numpy as np
 
 
+def source_to_system_time(t_source : float, source_now : float, system_now : float) -> float:
+    """A timestamp in a source's clock (e.g. ROS time, possibly simulation time), in the system clock.
+
+    source_now and system_now must be read at the same moment. The source clock's age of the stamp
+    (source_now - t_source) is carried over to the system clock as it is: if the source clock runs at a different
+    rate (a simulation slower than real time), the error is proportional to that age, which is just the delivery
+    delay, i.e. milliseconds, rather than to how long the clocks have been running.
+    """
+    return system_now - (source_now - t_source)
+
+
 class ClockDeltaEstimator:
     """Sliding-window minimum of (t_recv - t_send), as in pyxbot's zmq_client.
 

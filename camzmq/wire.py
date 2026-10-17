@@ -4,15 +4,16 @@ A frame travels as ONE flat message, because ZMQ_CONFLATE (which gives a subscri
 backlog) does not support multipart messages. The rgb and depth of a camera are taken at the same instant and travel
 together, so conflation can never pair an image with the depth of another instant. Layout:
 
-    header  struct "<4sHHQddIIBBH": magic, version, flags, seq, t_capture, t_send, height, width,
-                                    rgb_channels, reserved, name_len
+    header  struct "<4sHHQdddIIBBH": magic, version, flags, seq, t_capture, t_send, t_source, height, width,
+                                     rgb_channels, reserved, name_len
     name    utf-8, name_len bytes
     rgb     uint8 (height, width, rgb_channels), rgb_channels 1 (gray) or 3 (RGB), if flags & HAS_RGB
     depth   float32 (height, width), meters, if flags & HAS_DEPTH. NaN, +inf and -inf travel unchanged.
 
 Each payload starts at an offset aligned to 8 bytes, so decoding reads it in place with np.frombuffer, without copies.
-t_capture and t_send are both in the publisher's clock: t_capture is when the image was taken, t_send when the
-message was sent (subscribers estimate the offset between the clocks from t_send).
+t_capture and t_send are both in the publisher's system clock: t_capture is when the image was taken, t_send when the
+message was sent (subscribers estimate the offset between the clocks from t_send). t_source is the capture time as the
+source stamped it, in the source's own clock, e.g. a ROS header stamp, which is simulation time with use_sim_time.
 """
 from __future__ import annotations
 
@@ -22,10 +23,10 @@ from dataclasses import dataclass
 import numpy as np
 
 MAGIC = b"CZMQ"
-VERSION = 1
+VERSION = 2
 HAS_RGB = 1
 HAS_DEPTH = 2
-_HEADER = struct.Struct("<4sHHQddIIBBH")
+_HEADER = struct.Struct("<4sHHQdddIIBBH")
 _ALIGN = 8
 _DEPTH_DTYPE = np.dtype("<f4")
 
@@ -40,9 +41,11 @@ class Frame:
     camera : str
     seq : int
     t_capture : float
-    """When the image was taken, in the publisher's clock."""
+    """When the image was taken, in the publisher's system clock."""
     t_send : float
-    """When the message was sent, in the publisher's clock."""
+    """When the message was sent, in the publisher's system clock."""
+    t_source : float
+    """When the image was taken, as the source stamped it (e.g. a ROS header stamp, possibly simulation time)."""
     rgb : np.ndarray | None
     """(height, width, channels) uint8, channels 1 (gray) or 3 (RGB order). None if not published."""
     depth : np.ndarray | None
@@ -58,8 +61,10 @@ class Frame:
 
 
 def encode_frame(camera : str, seq : int, t_capture : float, t_send : float,
-                 rgb : np.ndarray | None, depth : np.ndarray | None) -> bytes:
-    """Pack a frame into a single message."""
+                 rgb : np.ndarray | None, depth : np.ndarray | None, t_source : float | None = None) -> bytes:
+    """Pack a frame into a single message. t_source defaults to t_capture, for sources stamping in system time."""
+    if t_source is None:
+        t_source = t_capture
     if rgb is None and depth is None:
         raise ValueError("a frame needs rgb, depth, or both")
     shape = None
@@ -78,7 +83,8 @@ def encode_frame(camera : str, seq : int, t_capture : float, t_send : float,
     height, width = shape
     name = camera.encode("utf-8")
     flags = (HAS_RGB if rgb is not None else 0) | (HAS_DEPTH if depth is not None else 0)
-    parts : list = [_HEADER.pack(MAGIC, VERSION, flags, seq, t_capture, t_send, height, width, channels, 0, len(name)),
+    parts : list = [_HEADER.pack(MAGIC, VERSION, flags, seq, t_capture, t_send, t_source, height, width, channels, 0,
+                                 len(name)),
                     name]
     offset = _HEADER.size + len(name)
     for payload in (rgb, None if depth is None else depth.astype(_DEPTH_DTYPE, copy=False)):
@@ -98,11 +104,13 @@ def decode_frame(buf) -> Frame:
     mv = memoryview(buf).cast("B")
     if len(mv) < _HEADER.size:
         raise ValueError(f"message too short for a camzmq header ({len(mv)} bytes)")
-    magic, version, flags, seq, t_capture, t_send, height, width, channels, _, name_len = _HEADER.unpack_from(mv, 0)
+    magic, version = struct.unpack_from("<4sH", mv, 0)
     if magic != MAGIC:
         raise ValueError(f"not a camzmq message (magic {magic!r})")
-    if version != VERSION:
-        raise ValueError(f"camzmq wire version {version}, this receiver understands {VERSION}")
+    if version != VERSION: # checked before unpacking the rest: the header layout changes between versions
+        raise ValueError(f"camzmq wire version {version}, this receiver understands {VERSION}: "
+                         f"update camzmq on both sides")
+    _, _, flags, seq, t_capture, t_send, t_source, height, width, channels, _, name_len = _HEADER.unpack_from(mv, 0)
     offset = _HEADER.size
     camera = bytes(mv[offset:offset+name_len]).decode("utf-8")
     offset += name_len
@@ -120,4 +128,4 @@ def decode_frame(buf) -> Frame:
         offset += count*_DEPTH_DTYPE.itemsize
     if offset != len(mv):
         raise ValueError(f"camzmq message is {len(mv)} bytes, the header describes {offset}")
-    return Frame(camera=camera, seq=seq, t_capture=t_capture, t_send=t_send, rgb=rgb, depth=depth)
+    return Frame(camera=camera, seq=seq, t_capture=t_capture, t_send=t_send, t_source=t_source, rgb=rgb, depth=depth)

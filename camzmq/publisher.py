@@ -28,11 +28,14 @@ class SourceCamera:
 class SourceFrame:
     camera : str
     t_capture : float
-    """When the image was taken, in the clock of FrameSource.clock()."""
+    """When the image was taken, in the system clock of FrameSource.clock()."""
     rgb : np.ndarray | None
     """(H, W, 3) uint8, RGB order, rectified."""
     depth : np.ndarray | None
     """(H, W) float32 meters, rectified and registered to rgb. NaN/+inf/-inf allowed."""
+    t_source : float | None = None
+    """When the image was taken, as the source stamped it in its own clock (e.g. ROS time, possibly simulation time).
+    None if the source stamps in the system clock, i.e. t_source is t_capture."""
 
 
 class FrameSource(ABC):
@@ -48,7 +51,7 @@ class FrameSource(ABC):
 
     @abstractmethod
     def clock(self) -> float:
-        """The current time in the clock of SourceFrame.t_capture, to stamp send times in the same clock."""
+        """The current system time, in the clock of SourceFrame.t_capture, to stamp send times in the same clock."""
 
     def close(self) -> None:
         pass
@@ -210,7 +213,8 @@ class CameraPublisher:
         if frame.camera not in self._configs:
             return
         rgb, depth = self.process(frame)
-        msg = encode_frame(frame.camera, self._seq[frame.camera], frame.t_capture, self._source.clock(), rgb, depth)
+        msg = encode_frame(frame.camera, self._seq[frame.camera], frame.t_capture, self._source.clock(), rgb, depth,
+                           t_source=frame.t_source)
         self._sockets[frame.camera].send(msg, copy=False)
         self._seq[frame.camera] += 1
 

@@ -26,6 +26,19 @@ def test_roundtrip(channels, with_depth):
         assert frame.depth is None
 
 
+def test_source_time():
+    """t_source travels unchanged, and defaults to the capture time."""
+    assert decode_frame(encode_frame("cam", 0, 1.25, 1.5, None, _depth(), t_source=184.17)).t_source == 184.17
+    assert decode_frame(encode_frame("cam", 0, 1.25, 1.5, None, _depth())).t_source == 1.25
+
+
+def test_other_wire_version_is_refused():
+    buf = bytearray(encode_frame("cam", 0, 0.0, 0.0, None, _depth()))
+    buf[4:6] = (1).to_bytes(2, "little")
+    with pytest.raises(ValueError, match="wire version 1"):
+        decode_frame(bytes(buf))
+
+
 def test_depth_only():
     frame = decode_frame(encode_frame("cam", 0, 0.0, 0.0, None, _depth()))
     assert frame.rgb is None and frame.depth.dtype == np.float32 and frame.depth.shape == (4, 5)

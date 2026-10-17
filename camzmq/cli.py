@@ -39,10 +39,10 @@ def _publish(source : FrameSource, args : argparse.Namespace) -> None:
                                     depth_resize=args.depth_resize, depth_invalid=args.depth_invalid)
                for i, name in enumerate(source.cameras())}
     publisher = CameraPublisher(source, configs, metadata_endpoint=f"tcp://{args.host}:{args.port}")
-    print(f"[camzmq] metadata on {publisher.metadata_endpoint}")
+    print(f"[camzmq] metadata on {publisher.metadata_endpoint}", flush=True)
     for name, cam in publisher.describe()["cameras"].items():
         print(f"[camzmq]   {name}: {cam['endpoint']}  {cam['height']}x{cam['width']}  rgb_channels={cam['rgb_channels']}"
-              f"  depth={cam['has_depth']} ({cam['depth_invalid']})  fx={cam['intrinsics']['fx']:.2f}")
+              f"  depth={cam['has_depth']} ({cam['depth_invalid']})  fx={cam['intrinsics']['fx']:.2f}", flush=True)
     try:
         publisher.run()
     except KeyboardInterrupt:
@@ -72,12 +72,15 @@ def ros2_main() -> None:
     ap.add_argument("--info-topic", required=True, help="sensor_msgs/CameraInfo topic")
     ap.add_argument("--rgb-topic", default=None)
     ap.add_argument("--depth-topic", default=None)
+    ap.add_argument("--use-sim-time", action="store_true",
+                    help="the topics are stamped with simulation time (/clock)")
     _add_publish_args(ap)
     args = ap.parse_args()
     from .sources.ros2 import Ros2Source
     source = Ros2Source(name=args.name, camera_info_topic=args.info_topic,
                         rgb_topic=args.rgb_topic if args.rgb != "none" else None,
-                        depth_topic=None if args.no_depth else args.depth_topic)
+                        depth_topic=None if args.no_depth else args.depth_topic,
+                        use_sim_time=args.use_sim_time)
     _publish(source, args)
 
 
@@ -116,7 +119,8 @@ def client_main() -> None:
                     frame = received.frame
                     fps = frame.seq - last_seq.get(name, frame.seq)
                     last_seq[name] = frame.seq
-                    line = f"[camzmq] {name}: seq {frame.seq}  {fps} fps  age {sub.age(name, frame)*1000:.1f} ms"
+                    line = (f"[camzmq] {name}: seq {frame.seq}  {fps} fps  age {sub.age(name, frame)*1000:.1f} ms"
+                            f"  source time {frame.t_source:.3f}")
                     if frame.depth is not None:
                         d = frame.depth
                         valid = np.isfinite(d) & (d > 0)
