@@ -18,6 +18,7 @@ camzmq-zed = "camzmq.cli:zed_main"
 camzmq-ros2 = "camzmq.cli:ros2_main"
 camzmq-synthetic = "camzmq.cli:synthetic_main"
 camzmq-client = "camzmq.cli:client_main"
+camzmq-gui = "camzmq.cli:gui_main"
 
 [tool.setuptools]
 packages = ["camzmq", "camzmq.sources"]

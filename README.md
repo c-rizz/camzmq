@@ -18,6 +18,14 @@ camzmq-synthetic --port 5700 --size 64x102
 camzmq-client --connect tcp://127.0.0.1:5700
 ```
 
+`camzmq-client` prints the frame rate, age and depth statistics. `camzmq-gui` shows the same, plus the rgb and depth
+images of every camera, in a web page (default http://127.0.0.1:8080; `--bind 0.0.0.0` to reach it from other hosts, or
+forward the port over ssh). Depth is colored from near to far, with NaN, +inf and -inf each in their own color.
+
+```
+camzmq-gui --connect tcp://robot-pc:5700 --http-port 8080
+```
+
 Publish a ZED camera at a 64x102 render resolution:
 
 ```

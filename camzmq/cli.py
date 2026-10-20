@@ -131,3 +131,27 @@ def client_main() -> None:
                     print(line, flush=True)
         except KeyboardInterrupt:
             pass
+
+
+def gui_main() -> None:
+    ap = argparse.ArgumentParser(description="Show what a camzmq publisher sends, in a web page.")
+    ap.add_argument("--connect", default="tcp://127.0.0.1:5700", help="the publisher's metadata endpoint")
+    ap.add_argument("--camera", action="append", default=None, help="camera to watch (default: all)")
+    ap.add_argument("--http-port", type=int, default=8080, help="port of the web page (default 8080)")
+    ap.add_argument("--bind", default="127.0.0.1",
+                    help="interface the web page is served on (default 127.0.0.1; 0.0.0.0 to reach it from other hosts)")
+    ap.add_argument("--depth-range", type=_floats, default=None,
+                    help="near,far in meters spanned by the depth colors (default: the range of each frame)")
+    args = ap.parse_args()
+    if args.depth_range is not None and len(args.depth_range) != 2:
+        ap.error("--depth-range takes near,far")
+    from .gui import serve
+    with CameraSubscriber(args.connect, cameras=args.camera) as sub:
+        server = serve(sub, args.bind, args.http_port, args.depth_range)
+        print(f"[camzmq] gui on http://{args.bind}:{server.server_address[1]}", flush=True)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
