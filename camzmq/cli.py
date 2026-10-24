@@ -10,8 +10,9 @@ from .publisher import CameraPublisher, FrameSource, PublishConfig
 from .subscriber import CameraSubscriber
 
 
-def _hw(text : str) -> tuple[int,int]:
-    h, w = text.lower().split("x")
+def _size(text : str) -> tuple[int,int]:
+    """"WxH", the way resolutions are usually written -> (height, width), the order used everywhere else."""
+    w, h = text.lower().split("x")
     return int(h), int(w)
 
 
@@ -23,8 +24,8 @@ def _add_publish_args(ap : argparse.ArgumentParser) -> None:
     ap.add_argument("--host", default="*", help="interface to bind to (default: all)")
     ap.add_argument("--port", type=int, default=5700,
                     help="metadata port; the cameras are published on the following ports (default 5700)")
-    ap.add_argument("--size", type=_hw, default=None,
-                    help="published resolution HxW, e.g. 64x102 (default: the source's, after the crop)")
+    ap.add_argument("--size", type=_size, default=None,
+                    help="published resolution WxH (width x height), e.g. 102x64 (default: the source's, after the crop)")
     ap.add_argument("--crop", type=_floats, default=None,
                     help="crop before resizing, as fractions top,bottom,left,right, e.g. 0,1,0.1,0.9")
     ap.add_argument("--rgb", choices=["rgb", "gray", "none"], default="rgb")
@@ -87,7 +88,7 @@ def ros2_main() -> None:
 def synthetic_main() -> None:
     ap = argparse.ArgumentParser(description="Publish a test pattern over ZMQ.")
     ap.add_argument("--name", default="synthetic")
-    ap.add_argument("--source-size", type=_hw, default=(1200, 1920))
+    ap.add_argument("--source-size", type=_size, default=(1200, 1920), help="WxH (default 1920x1200)")
     ap.add_argument("--fovy", type=float, default=80.0, help="vertical field of view in degrees")
     ap.add_argument("--fps", type=float, default=30.0)
     _add_publish_args(ap)

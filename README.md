@@ -14,7 +14,7 @@ Camera frames (rgb + metric depth) over ZMQ.
 Try the transport with a test pattern:
 
 ```
-camzmq-synthetic --port 5700 --size 64x102
+camzmq-synthetic --port 5700 --size 102x64
 camzmq-client --connect tcp://127.0.0.1:5700
 ```
 
@@ -26,16 +26,17 @@ forward the port over ssh). Depth is colored from near to far, with NaN, +inf an
 camzmq-gui --connect tcp://robot-pc:5700 --http-port 8080
 ```
 
-Publish a ZED camera at a 64x102 render resolution:
+Publish a ZED camera at a 102x64 render resolution (`--size` is WxH, width x height, as resolutions are usually
+written; the Python API takes `(height, width)`):
 
 ```
-camzmq-zed --port 5700 --size 64x102
+camzmq-zed --port 5700 --size 102x64
 ```
 
 Or from the ZED ROS 2 wrapper's topics:
 
 ```
-camzmq-ros2 --name zed --port 5700 --size 64x102 \
+camzmq-ros2 --name zed --port 5700 --size 102x64 \
     --info-topic /zed_front_down/camera_info \
     --rgb-topic /zed_front_down/image \
     --depth-topic /zed_front_down/depth_image
@@ -70,7 +71,7 @@ with CameraSubscriber("tcp://robot-pc:5700", cameras=["zed"]) as sub:
 ## Design notes
 
 **Resolution.** Publish at the resolution the policy's simulated camera renders at, not the sensor's: a full HD1200
-float32 depth map is 9.2 MB, a 64x102 one 26 KB. Resizing keeps the field of view, and the published intrinsics are
+float32 depth map is 9.2 MB, a 102x64 one 26 KB. Resizing keeps the field of view, and the published intrinsics are
 those of the resized image. Depth is never blended across invalid pixels: `nearest` (default) takes one sample per
 output pixel at its center, as a renderer does at that resolution; `masked_mean` averages the valid measurements of
 each output pixel. Cost per HD1200 frame, in numpy: rgb area resize ~9-17 ms, depth `nearest` under 1 ms, depth
